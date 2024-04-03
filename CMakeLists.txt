@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)                        
+cmake_minimum_required(VERSION 3.16)                        
 cmake_policy(SET CMP0074 NEW)
 
 project(Xcompact3d LANGUAGES Fortran)
@@ -43,7 +43,7 @@ else (CMAKE_BUILD_TYPE MATCHES "NONE")
 endif (CMAKE_BUILD_TYPE MATCHES "NONE")
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake" "${CMAKE_SOURCE_DIR}/cmake/compilers" "${CMAKE_SOURCE_DIR}/cmake/fft")
-find_package(DECOMP2D REQUIRED)
+# find_package(DECOMP2D REQUIRED)
 
 # Despite IO is handled by 2DECOMP&FFT we need to set it
 set (IO_BACKEND "mpi" CACHE STRING "Default IO backend (mpi (default) or adios2)")

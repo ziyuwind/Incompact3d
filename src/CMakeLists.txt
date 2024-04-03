@@ -1,6 +1,7 @@
 include_directories(${2decomp_INCLUDE_DIR}
                     ${CMAKE_SOURCE_DIR}/src)
-
+include_directories($ENV{HOME}/2decomp-fft/build/include/)
+link_directories($ENV{HOME}/2decomp-fft/build/lib/)
 message(STATUS "CMAKE_SOURCE_DIR: ${CMAKE_SOURCE_DIR}")
 message(STATUS "PROJECT_BINARY_DIR: ${PROJECT_BINARY_DIR}")
 
@@ -53,7 +54,6 @@ add_executable(xcompact3d
                     variables.f90
                     visu.f90
                     xcompact3d.f90)
-
 target_link_libraries(xcompact3d PRIVATE decomp2d)
 
 if (MPI_FOUND)
