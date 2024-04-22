@@ -20,7 +20,7 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
     # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     # We don't want to build openmpi each time this workflow is
     # run. Setup caching of OpenMPI after it is built and installed.
@@ -28,7 +28,7 @@ jobs:
     # actions docs.
     - name: Cache OpenMPI
       id: cache-openmpi
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: openmpi-4.1.4/installed
         key: openmpi-4.1.4
@@ -54,7 +54,7 @@ jobs:
     - name: Compare output time evolution to reference output
       run: |
         pip install numpy
-        cd build/RunTests/TGV
+        cd build/RunTests/TGV-Taylor-Green-vortex
         python compare_TGV_time_evolution.py \
             --input time_evol.dat \
             --reference reference_time_evol.dat

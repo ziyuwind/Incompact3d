@@ -28,7 +28,7 @@ contains
     use variables
     use param
     use MPI
-    use dbg_schemes, only: sin_prec, cos_prec
+    use mhd, only: mhd_active,Bm,Bmean
 
     implicit none
 
@@ -66,13 +66,26 @@ contains
              y=real((j+xstart(2)-1-1),mytype)*dy
              do i=1,xsize(1)
                 x=real(i-1,mytype)*dx
-
-                ux1(i,j,k)=+sin_prec(x)*cos_prec(y)*cos_prec(z)
-                uy1(i,j,k)=-cos_prec(x)*sin_prec(y)*cos_prec(z)
-                if (iscalar == 1) then
-                   phi1(i,j,k,1:numscalar)=sin_prec(x)*sin_prec(y)*cos_prec(z)
+                if(mhd_active) then
+                   ux1(i,j,k)= -two*sin(y)*cos(z)
+                   uy1(i,j,k)=  two*sin(x)*cos(z)
+                   uz1(i,j,k)=zero
+                   !
+                   Bm(i,j,k,1)=-two*sin(y)
+                   Bm(i,j,k,2)= two*sin(two*x)
+                   Bm(i,j,k,3)=zero
+                   !
+                   Bmean(i,j,k,1)=zero
+                   Bmean(i,j,k,2)=zero
+                   Bmean(i,j,k,3)=zero
+                else
+                   ux1(i,j,k)=+sin(x)*cos(y)*cos(z)
+                   uy1(i,j,k)=-cos(x)*sin(y)*cos(z)
+                   if (iscalar == 1) then
+                      phi1(i,j,k,1:numscalar)=sin(x)*sin(y)*cos(z)
+                   endif
+                   uz1(i,j,k)=zero
                 endif
-                uz1(i,j,k)=zero
              enddo
           enddo
        enddo
@@ -414,6 +427,7 @@ contains
 
     use decomp_2d_io, only : decomp_2d_register_variable
     use visu, only : io_name, output2D
+    use mhd, only : mhd_active
     
     implicit none
 
@@ -421,6 +435,15 @@ contains
 
     call decomp_2d_register_variable(io_name, "vort", 1, 0, output2D, mytype)
     call decomp_2d_register_variable(io_name, "critq", 1, 0, output2D, mytype)
+
+    if (mhd_active) then
+       call decomp_2d_register_variable(io_name, "J_x", 1, 0, output2D, mytype)
+       call decomp_2d_register_variable(io_name, "J_y", 1, 0, output2D, mytype)
+       call decomp_2d_register_variable(io_name, "J_z", 1, 0, output2D, mytype)
+       call decomp_2d_register_variable(io_name, "B_x", 1, 0, output2D, mytype)
+       call decomp_2d_register_variable(io_name, "B_y", 1, 0, output2D, mytype)
+       call decomp_2d_register_variable(io_name, "B_z", 1, 0, output2D, mytype)
+    endif
 
     visu_initialised = .true.
     
@@ -439,6 +462,7 @@ contains
     USE var, only : ta2,tb2,tc2,td2,te2,tf2,di2,ta3,tb3,tc3,td3,te3,tf3,di3
     use var, ONLY : nxmsize, nymsize, nzmsize
     use visu, only : write_field
+    use mhd, only : mhd_active,Bm
     use ibm_param, only : ubcx,ubcy,ubcz
 
     implicit none
@@ -501,6 +525,12 @@ contains
                   - tg1(:,:,:)*tc1(:,:,:) &
                   - th1(:,:,:)*tf1(:,:,:)
     call write_field(di1, ".", "critq", num, flush=.true.) ! Reusing temporary array, force flush
+
+    if(mhd_active) then
+      call write_field(Bm(:,:,:,1), ".", "B_x", num, flush = .true.)
+      call write_field(Bm(:,:,:,2), ".", "B_y", num, flush = .true.)
+      call write_field(Bm(:,:,:,3), ".", "B_z", num, flush = .true.)
+    endif
 
   end subroutine visu_tgv
   !############################################################################
@@ -575,7 +605,6 @@ contains
     use MPI
     use param, only : one, two, xnu, ifirst, itime
     use variables, only : numscalar, sc
-    use dbg_schemes, only: sin_prec, cos_prec
 
     implicit none
 
@@ -610,8 +639,8 @@ contains
           do i = 1,xsize(1)
             x = real(i+xstart(1)-1-1,mytype)*dx
             ! Initial solution
-            solx0 = sin_prec(x) * cos_prec(y)
-            soly0 = - cos_prec(x) * sin_prec(y)
+            solx0 = sin(x) * cos(y)
+            soly0 = - cos(x) * sin(y)
             ! Analytical solution
             solxt = solx0 * xdamping(1)
             solyt = soly0 * ydamping(1)
@@ -639,7 +668,7 @@ contains
                 do i = 1,xsize(1)
                   x = real(i+xstart(1)-1-1,mytype)*dx
                   ! Initial solution
-                  sols0 = sin_prec(x) * sin_prec(y)
+                  sols0 = sin(x) * sin(y)
                   ! Analytical solution
                   solst = sols0 * sdamping(1,l)
                   ! Time discrete solution
@@ -736,7 +765,6 @@ contains
 
     use param, only : one, two, xnu, ifirst, itime, itimescheme, iimplicit
     use variables, only : numscalar, sc
-    use dbg_schemes, only: exp_prec
 
     implicit none
 
@@ -755,12 +783,12 @@ contains
     sdamping(:,:) = one
 
     ! Compute analytical damping
-    coef(1) = exp_prec(-two*dt*xnu)
+    coef(1) = exp(-two*dt*xnu)
     do it = ifirst, itime
        xdamping(1) = xdamping(1) * coef(1)
        ydamping(1) = ydamping(1) * coef(1)
        do l = 1, numscalar
-         sdamping(1,l) = sdamping(1,l) * exp_prec(-two*dt*xnu/sc(l))
+         sdamping(1,l) = sdamping(1,l) * exp(-two*dt*xnu/sc(l))
        enddo
     enddo
 
@@ -838,7 +866,6 @@ contains
 
     use param
     use derivx, only : alsaix, asix, bsix, csix, dsix
-    use dbg_schemes, only: cos_prec
 
     implicit none
 
@@ -851,11 +878,11 @@ contains
       endif
     endif
 
-    k2out = asix * two * (one - cos_prec(kin*dx)) &
-          + four * bsix * half * (one - cos_prec(two*kin*dx)) &
-          + nine * csix * (two / nine) * (one - cos_prec(three*kin*dx)) &
-          + sixteen * dsix * (one / eight) * (one - cos_prec(four*kin*dx))
-    k2out = k2out / (one + two * alsaix * cos_prec(kin*dx))
+    k2out = asix * two * (one - cos(kin*dx)) &
+          + four * bsix * half * (one - cos(two*kin*dx)) &
+          + nine * csix * (two / nine) * (one - cos(three*kin*dx)) &
+          + sixteen * dsix * (one / eight) * (one - cos(four*kin*dx))
+    k2out = k2out / (one + two * alsaix * cos(kin*dx))
 
   end subroutine compute_k2
 

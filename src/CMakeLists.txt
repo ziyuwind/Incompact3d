@@ -16,21 +16,20 @@ add_executable(xcompact3d
                     acl_utils.f90 
                     adm.f90
                     airfoils.f90
-                    BC-ABL.f90
-                    BC-Cavity.f90
-                    BC-Channel-flow.f90
-                    BC-Cylinder.f90
-                    BC-Lock-exchange.f90
-                    BC-Mixing-layer.f90
-                    BC-Periodic-hill.f90
-                    BC-Pipe-flow.f90
-		    BC-Sandbox.f90
-                    BC-TBL.f90
-                    BC-TGV.f90
-                    BC-Uniform.f90
-                    BC-User.f90
+                    Case-ABL.f90
+                    Case-Cavity.f90
+                    Case-Channel.f90
+                    Case-Cylinder-wake.f90
+                    Case-Generic.f90
+                    Case-Gravity-current.f90
+                    Case-Mixing-layer.f90
+                    Case-Periodic-hill.f90
+                    Case-Pipe-flow.f90
+                    Case-Sandbox.f90
+                    Case-TBL.f90
+                    Case-TGV.f90
+                    Case-Uniform.f90
                     case.f90
-                    constants.f90
                     derive.f90
                     dynstall.f90
                     dynstall_legacy.f90
@@ -40,7 +39,9 @@ add_executable(xcompact3d
                     ibm.f90
                     implicit.f90
                     les_models.f90
+                    mhd.f90
                     module_param.f90
+                    mptool.f90
                     navier.f90
                     parameters.f90
                     poisson.f90
@@ -51,6 +52,7 @@ add_executable(xcompact3d
                     tools.f90
                     transeq.f90
                     turbine.f90
+		    utilities.f90
                     variables.f90
                     visu.f90
                     xcompact3d.f90)
