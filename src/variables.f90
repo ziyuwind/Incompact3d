@@ -10,6 +10,7 @@ module var
   USE variables
   USE param
   USE complex_geometry
+  USE mod_stret, only : stretching
 
   implicit none
   
@@ -53,6 +54,7 @@ module var
   integer, save :: nxmsize, nymsize, nzmsize
 
   ! working arrays for LES
+  ! These are by far too many variables and we should be able to decrease them
   real(mytype), save, allocatable, dimension(:,:,:) :: sgsx1,sgsy1,sgsz1,nut1,sxx1,syy1,szz1,sxy1,sxz1,syz1
   real(mytype), save, allocatable, dimension(:,:,:) :: sgsx2,sgsy2,sgsz2,nut2,sxx2,syy2,szz2,sxy2,sxz2,syz2
   real(mytype), save, allocatable, dimension(:,:,:) :: sgsx3,sgsy3,sgsz3,nut3,sxx3,syy3,szz3,sxy3,sxz3,syz3
@@ -69,9 +71,12 @@ module var
   real(mytype), save, allocatable, dimension(:,:,:) :: srt_smag, srt_smag2
   real(mytype), save, allocatable, dimension(:,:,:) :: srt_wale, srt_wale2, srt_wale3, srt_wale4
 
+
   ! working arrays for ABL
   real(mytype), save, allocatable, dimension(:,:) :: heatflux
   real(mytype), save, allocatable, dimension(:,:,:,:) :: abl_T
+  ! tmp fix for intel
+  real(mytype), save, allocatable, dimension(:,:,:) :: wallfluxx1, wallfluxy1, wallfluxz1  
 
   ! arrays for turbine modelling
   real(mytype), save, allocatable, dimension(:,:,:) :: FTx, FTy, FTz, Fdiscx, Fdiscy, Fdiscz
@@ -84,6 +89,8 @@ module var
 contains
 
   subroutine init_variables
+
+    implicit none 
 
     TYPE(DECOMP_INFO), save :: ph! decomposition object
 
@@ -228,6 +235,21 @@ contains
     byo=zero
     allocate(bzo(xsize(2),xsize(3)))
     bzo=zero
+
+    ! BC values in Y-pencil - Ricardo Frantz
+    allocate(byx1_2(ysize(1),ysize(3)))
+    byx1_2=zero
+    allocate(byxn_2(ysize(1),ysize(3)))
+    byxn_2=zero
+    allocate(byy1_2(ysize(1),ysize(3)))
+    byy1_2=zero
+    allocate(byyn_2(ysize(1),ysize(3)))
+    byyn_2=zero
+    allocate(byz1_2(ysize(1),ysize(3)))
+    byz1_2=zero
+    allocate(byzn_2(ysize(1),ysize(3)))
+    byzn_2=zero
+
     !inflow/outflow arrays (precursor simulations)
     if (iin.eq.3) then
        allocate(ux_inflow(ntimesteps,xsize(2),xsize(3)))
@@ -472,6 +494,12 @@ contains
        srt_smag=zero
        call alloc_x(srt_wale)
        srt_wale=zero
+       call alloc_x(wallfluxx1)
+       wallfluxx1=zero
+       call alloc_x(wallfluxy1)
+       wallfluxy1=zero
+       call alloc_x(wallfluxz1)
+       wallfluxz1=zero
        call alloc_y(sgsx2)
        sgsx2=zero
        call alloc_y(sgsy2)
@@ -628,6 +656,13 @@ contains
        zi=zero
        allocate(zf(nobjmax,zsize(1),zsize(2)))
        zf=zero
+       allocate(xepsi(nxraf,xsize(2),xsize(3))) 
+       xepsi=zero
+       allocate(yepsi(ysize(1),nyraf,ysize(3)))
+       yepsi=zero
+       allocate(zepsi(zsize(1),zsize(2),nzraf)) 
+       zepsi=zero
+
     endif
 
     !module filter
@@ -1250,11 +1285,6 @@ contains
     allocate(zpi(nz))
     zpi=zero
 
-    allocate(yeta(ny))
-    yeta=zero
-    allocate(yetai(ny))
-    yetai=zero
-
     ! x-position
     do i=1,nx
       xp(i)=real(i-1,mytype)*dx
@@ -1274,8 +1304,25 @@ contains
           ppy(ny) = two
        endif
     else
-       call stretching()
+       call stretching(ny, &
+                       yp, ypi, &
+                       ppy, pp2y, pp4y, &
+                       ppyi, pp2yi, pp4yi, &
+                       opt_write = .true.)
 
+       ! compute integral weights for stretched mesh - Ricardo Frantz
+       !TODO: change for exact formula
+       allocate(ypw(ny))
+       ypw=zero
+       do j=1,ny
+          if    (j==1)then
+             ypw(j) = (yp(j+1)-yp(j))*half
+          elseif(j==ny)then
+             ypw(j) = (yp(j)-yp(j-1))*half
+          else
+             ypw(j) = (yp(j+1)-yp(j-1))*half
+          endif
+       enddo
        allocate(dyp(ny))
        ! compute dy for stretched mesh - Kay
        do j=2,ny-1

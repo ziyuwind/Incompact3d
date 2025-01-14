@@ -243,6 +243,10 @@ module variables
   real(mytype), save, allocatable, dimension(:,:) :: byx1,byy1,byz1,byxn,byyn,byzn
   real(mytype), save, allocatable, dimension(:,:) :: bzx1,bzy1,bzz1,bzxn,bzyn,bzzn
 
+  real(mytype), save, allocatable, dimension(:,:) :: byx1_2,byxn_2
+  real(mytype), save, allocatable, dimension(:,:) :: byy1_2,byyn_2
+  real(mytype), save, allocatable, dimension(:,:) :: byz1_2,byzn_2
+
   !module derpres
   real(mytype),allocatable,dimension(:) :: cfx6,ccx6,cbx6,cfxp6,ciwxp6,csxp6,&
        cwxp6,csx6,cwx6,cifx6,cicx6,cisx6
@@ -271,9 +275,7 @@ module variables
   !module mesh
   real(mytype),allocatable,dimension(:) :: ppy,pp2y,pp4y
   real(mytype),allocatable,dimension(:) :: ppyi,pp2yi,pp4yi
-  real(mytype),allocatable,dimension(:) :: xp,xpi,yp,ypi,dyp,zp,zpi,del
-  real(mytype),allocatable,dimension(:) :: yeta,yetai
-  real(mytype) :: alpha,beta
+  real(mytype),allocatable,dimension(:) :: xp,xpi,yp,ypi,dyp,zp,zpi,del,ypw
 
 end module variables
 !############################################################################
@@ -282,7 +284,7 @@ module param
 
   use decomp_2d_constants, only : mytype
 
-  integer :: nclx1,nclxn,ncly1,nclyn,nclz1,nclzn
+  integer :: nclx1,nclxn,ncly1,nclyn,nclz1,nclzn,FreeStream
   integer :: nclxS1,nclxSn,nclyS1,nclySn,nclzS1,nclzSn
   integer :: nclxBx1,nclxBxn,nclyBx1,nclyBxn,nclzBx1,nclzBxn
   integer :: nclxBy1,nclxByn,nclyBy1,nclyByn,nclzBy1,nclzByn
@@ -307,7 +309,8 @@ module param
        itype_uniform = 11, &
        itype_sandbox = 12, &
        itype_cavity = 13, &
-       itype_pipe = 14
+       itype_pipe = 14, &
+       itype_ptbl = 15
 
   integer :: cont_phi,itr,itime,itest,iprocessing
   integer :: ifft,istret,iforc_entree,iturb
@@ -327,6 +330,7 @@ module param
   real(mytype) :: C_filter
   character(len=512) :: inflowpath
   logical :: validation_restart
+  logical :: mhd_active,particle_active
 
   ! Logical, true when synchronization is needed
   logical, save :: sync_vel_needed = .true.
@@ -362,6 +366,22 @@ module param
   integer :: jles
   integer :: smagwalldamp
   real(mytype) :: smagcst,nSmag,walecst,FSGS,pr_t,maxdsmagcst
+
+  !Theta Dot Model
+  integer :: jtheta_dot,jthickness,Method_FT
+  real(mytype) :: K_theta, H_12
+
+  !Blowing Model
+  integer :: Blowing
+  real(mytype) :: A_Blowing,Xst_Blowing,Xen_Blowing,Range_Smooth
+
+  !Adverse Pressure Gradient
+  integer :: APG
+  real(mytype) :: APG_DpDX,APG_Beta
+
+  !Probe for Spectra
+  integer :: Pro_Spectra
+  real(mytype) :: X_Pro_Spectra,Z_Pro_Spectra
 
   !! Gravity field (vector components)
   real(mytype) :: gravx, gravy, gravz
@@ -529,6 +549,7 @@ module complex_geometry
   integer     ,allocatable,dimension(:,:)   :: nobjx,nobjy,nobjz
   integer     ,allocatable,dimension(:,:,:) :: nxipif,nxfpif,nyipif,nyfpif,nzipif,nzfpif
   real(mytype),allocatable,dimension(:,:,:) :: xi,xf,yi,yf,zi,zf
+  real(mytype),allocatable,dimension(:,:,:) :: xepsi, yepsi, zepsi  
   integer :: nxraf,nyraf,nzraf,nraf,nobjmax
 end module complex_geometry
 !############################################################################

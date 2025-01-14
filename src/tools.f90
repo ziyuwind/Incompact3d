@@ -208,8 +208,10 @@ contains
     use variables
     use param
     use MPI
+    use mod_stret, only : beta
     use navier, only : gradp
-    use mhd, only : mhd_active,mhd_equation,Bm,dBm
+    use mhd, only : mhd_equation,Bm,dBm
+    use particle, only : particle_checkpoint
 
     implicit none
 
@@ -311,7 +313,7 @@ contains
           call decomp_2d_write_one(1,mu1(:,:,:),resfile,"mu",0,io_restart,reduce_prec=.false.)
        endif
 
-       if (mhd_active .and. mhd_equation) then
+       if (mhd_active .and. mhd_equation == 'induction') then
           call decomp_2d_write_one(1,Bm(:,:,:,1),resfile,'bx',0,io_restart,reduce_prec=.false.)
           call decomp_2d_write_one(1,Bm(:,:,:,2),resfile,'by',0,io_restart,reduce_prec=.false.)
           call decomp_2d_write_one(1,Bm(:,:,:,3),resfile,'bz',0,io_restart,reduce_prec=.false.)
@@ -368,9 +370,13 @@ contains
           write(111,fmt2) 'iimplicit=',iimplicit
           write(111,'(A)')'/End'
           write(111,'(A)')'!========================='
-
           close(111)
        end if
+
+       if(particle_active) then
+          call particle_checkpoint(mode='write',filename='checkpoint-particles')
+       endif
+
     else
        if (nrank==0) then
          write(*,*)'==========================================================='
@@ -438,7 +444,7 @@ contains
           call decomp_2d_read_one(1,mu1,resfile,"mu",io_restart,reduce_prec=.false.)
        end if
 
-       if(mhd_active .and. mhd_equation) then
+       if(mhd_active .and. mhd_equation == 'induction') then
           call decomp_2d_read_one(1,Bm(:,:,:,1),resfile,'bx',io_restart,reduce_prec=.false.)
           call decomp_2d_read_one(1,Bm(:,:,:,2),resfile,'by',io_restart,reduce_prec=.false.)
           call decomp_2d_read_one(1,Bm(:,:,:,3),resfile,'bz',io_restart,reduce_prec=.false.)
@@ -464,12 +470,16 @@ contains
          open(111, file=filename)
          read(111, nml=Time)
          close(111)
+
          t0 = tfield
          itime0 = 0
+
        else
          t0 = zero
          itime0 = 0
        end if
+
+       if(particle_active) call particle_checkpoint(mode='read')
        
     endif
 
@@ -507,9 +517,9 @@ contains
 
     use decomp_2d_io, only : decomp_2d_register_variable, decomp_2d_init_io
     use variables, only : numscalar
-    use param, only : ilmn, nrhotime, ntime
+    use param, only : ilmn, nrhotime, ntime, mhd_active
     use var, only : itimescheme, iibm
-    use mhd, only : mhd_active, mhd_equation
+    use mhd, only : mhd_equation
     
     implicit none
 
@@ -566,9 +576,10 @@ contains
           write(varname, *) "drho-", is
           call decomp_2d_register_variable(io_restart, varname, 1, 0, 0, mytype)
        end do
+       call decomp_2d_register_variable(io_restart, "mu", 1, 0, 0, mytype)
     end if
  
-    if (mhd_active .and. mhd_equation) then
+    if (mhd_active .and. mhd_equation == 'induction') then
        call decomp_2d_register_variable(io_restart, "bx", 1, 0, 0, mytype)
        call decomp_2d_register_variable(io_restart, "by", 1, 0, 0, mytype)
        call decomp_2d_register_variable(io_restart, "bz", 1, 0, 0, mytype)
@@ -589,16 +600,17 @@ contains
   subroutine apply_spatial_filter(ux1,uy1,uz1,phi1)
 
     use param
-    use var, only: uxf1,uyf1,uzf1,uxf2,uyf2,uzf2,uxf3,uyf3,uzf3,di1,di2,di3,phif1,phif2,phif3
+    !use var, only: uxf1,uyf1,uzf1,uxf2,uyf2,uzf2,uxf3,uyf3,uzf3,di1,di2,di3,phif1,phif2,phif3
+    use var, only: uxf1,uyf1,uzf1,di1,phif1
+    use var, only: ux2,uy2,uz2, phi2,uxf2,uyf2,uzf2,di2,phif2
+    use var, only: ux3,uy3,uz3, phi3,uxf3,uyf3,uzf3,di3,phif3
     use variables
     use ibm_param, only : ubcx,ubcy,ubcz
 
     implicit none
     real(mytype),dimension(xsize(1),xsize(2),xsize(3)), intent(inout) :: ux1,uy1,uz1
-    real(mytype),dimension(xsize(1),xsize(2),xsize(3), numscalar), intent(inout) :: phi1
+    real(mytype),dimension(xsize(1),xsize(2),xsize(3), numscalar), intent(in) :: phi1
     real(mytype),dimension(xsize(1),xsize(2),xsize(3)) :: phi11
-    real(mytype),dimension(ysize(1),ysize(2),ysize(3)) :: ux2,uy2,uz2, phi2
-    real(mytype),dimension(zsize(1),zsize(2),zsize(3)) :: ux3,uy3,uz3, phi3
 
     integer :: i,j,k,npaire
 
@@ -791,8 +803,9 @@ contains
   subroutine compute_cfldiff()
      use param, only : xnu,dt,dx,dy,dz,istret
      use param, only : cfl_diff_sum, cfl_diff_x, cfl_diff_y, cfl_diff_z
+     use param, only : mhd_active
      use variables, only : dyp
-     use mhd, only: mhd_active, mhd_equation,rem
+     use mhd, only: mhd_equation,rem
 
      implicit none
 
@@ -817,7 +830,7 @@ contains
         write(*,*) '==========================================================='
      endif
      
-     if( mhd_active.and.mhd_equation) then
+     if( mhd_active .and. mhd_equation=='induction') then
  
         cfl_diff_x = dt/ (dx**2) / rem
         cfl_diff_z = dt/ (dz**2) / rem
@@ -1207,194 +1220,6 @@ subroutine cfl_compute(uxmax,uymax,uzmax)
   endif
 
 end subroutine cfl_compute
-!##################################################################
-!##################################################################
-subroutine stretching()
-
-  use decomp_2d
-  use decomp_2d_constants
-  !use decomp_2d_poisson
-  use variables
-  use param
-  use var
-  use mpi
-
-  implicit none
-
-  real(mytype) :: yinf,den,xnum,xcx,den1,den2,den3,den4,xnum1,cst
-  integer :: j
-
-  yinf=-yly/two
-  den=two*beta*yinf
-  xnum=-yinf-sqrt(pi*pi*beta*beta+yinf*yinf)
-  alpha=abs(xnum/den)
-  xcx=one/beta/alpha
-  if (alpha.ne.0.) then
-     if (istret.eq.1) yp(1)=zero
-     if (istret.eq.2) yp(1)=zero
-     if (istret.eq.1) yeta(1)=zero
-     if (istret.eq.2) yeta(1)=-half
-     if (istret.eq.3) yp(1)=zero
-     if (istret.eq.3) yeta(1)=-half
-     do j=2,ny
-        if (istret==1) yeta(j)=real(j-1,mytype)*(one/nym)
-        if (istret==2) yeta(j)=real(j-1,mytype)*(one/nym)-half
-        if (istret==3) yeta(j)=real(j-1,mytype)*(half/nym)-half
-        den1=sqrt(alpha*beta+one)
-        xnum=den1/sqrt(alpha/pi)/sqrt(beta)/sqrt(pi)
-        den=two*sqrt(alpha/pi)*sqrt(beta)*pi*sqrt(pi)
-        den3=((sin(pi*yeta(j)))*(sin(pi*yeta(j)))/beta/pi)+alpha/pi
-        den4=two*alpha*beta-cos(two*pi*yeta(j))+one
-        xnum1=(atan(xnum*tan(pi*yeta(j))))*den4/den1/den3/den
-        cst=sqrt(beta)*pi/(two*sqrt(alpha)*sqrt(alpha*beta+one))
-        if (istret==1) then
-           if (yeta(j).lt.half) yp(j)=xnum1-cst-yinf
-           if (yeta(j).eq.half) yp(j)=zero-yinf
-           if (yeta(j).gt.half) yp(j)=xnum1+cst-yinf
-        endif
-        if (istret==2) then
-           if (yeta(j).lt.half) yp(j)=xnum1-cst+yly
-           if (yeta(j).eq.half) yp(j)=zero+yly
-           if (yeta(j).gt.half) yp(j)=xnum1+cst+yly
-        endif
-        if (istret==3) then
-           if (yeta(j).lt.half) yp(j)=(xnum1-cst+yly)*two
-           if (yeta(j).eq.half) yp(j)=(zero+yly)*two
-           if (yeta(j).gt.half) yp(j)=(xnum1+cst+yly)*two
-        endif
-     enddo
-  endif
-  if (alpha.eq.0.) then
-     yp(1)=-1.e10
-     do j=2,ny
-        yeta(j)=real(j-1,mytype)*(one/ny)
-        yp(j)=-beta*cos(pi*yeta(j))/sin(yeta(j)*pi)
-     enddo
-  endif
-  if (alpha.ne.0.) then
-     do j=1,ny
-        if (istret==1) yetai(j)=(real(j,mytype)-half)*(one/nym)
-        if (istret==2) yetai(j)=(real(j,mytype)-half)*(one/nym)-half
-        if (istret==3) yetai(j)=(real(j,mytype)-half)*(half/nym)-half
-        den1=sqrt(alpha*beta+one)
-        xnum=den1/sqrt(alpha/pi)/sqrt(beta)/sqrt(pi)
-        den=2.*sqrt(alpha/pi)*sqrt(beta)*pi*sqrt(pi)
-        den3=((sin(pi*yetai(j)))*(sin(pi*yetai(j)))/beta/pi)+alpha/pi
-        den4=two*alpha*beta-cos(two*pi*yetai(j))+one
-        xnum1=(atan(xnum*tan(pi*yetai(j))))*den4/den1/den3/den
-        cst=sqrt(beta)*pi/(two*sqrt(alpha)*sqrt(alpha*beta+one))
-        if (istret==1) then
-           if (yetai(j).lt.half) ypi(j)=xnum1-cst-yinf
-           if (yetai(j).eq.half) ypi(j)=zero-yinf
-           if (yetai(j).gt.half) ypi(j)=xnum1+cst-yinf
-        endif
-        if (istret==2) then
-           if (yetai(j).lt.half) ypi(j)=xnum1-cst+yly
-           if (yetai(j).eq.half) ypi(j)=zero+yly
-           if (yetai(j).gt.half) ypi(j)=xnum1+cst+yly
-        endif
-        if (istret==3) then
-           if (yetai(j).lt.half) ypi(j)=(xnum1-cst+yly)*two
-           if (yetai(j).eq.half) ypi(j)=(zero+yly)*two
-           if (yetai(j).gt.half) ypi(j)=(xnum1+cst+yly)*two
-        endif
-     enddo
-  endif
-  if (alpha.eq.0.) then
-     ypi(1)=-1.e10
-     do j=2,ny
-        yetai(j)=real(j-1,mytype)*(one/ny)
-        ypi(j)=-beta*cos(pi*yetai(j))/sin(yetai(j)*pi)
-     enddo
-  endif
-
-  !Mapping!!, metric terms
-  if (istret .ne. 3) then
-     do j=1,ny
-        ppy(j)=yly*(alpha/pi+(one/pi/beta)*sin(pi*yeta(j))*sin(pi*yeta(j)))
-        pp2y(j)=ppy(j)*ppy(j)
-        pp4y(j)=(-two/beta*cos(pi*yeta(j))*sin(pi*yeta(j)))
-     enddo
-     do j=1,ny
-        ppyi(j)=yly*(alpha/pi+(one/pi/beta)*sin(pi*yetai(j))*sin(pi*yetai(j)))
-        pp2yi(j)=ppyi(j)*ppyi(j)
-        pp4yi(j)=(-two/beta*cos(pi*yetai(j))*sin(pi*yetai(j)))
-     enddo
-  endif
-
-  if (istret .eq. 3) then
-     do j=1,ny
-        ppy(j)=yly*(alpha/pi+(one/pi/beta)*sin(pi*yeta(j))*sin(pi*yeta(j)))
-        pp2y(j)=ppy(j)*ppy(j)
-        pp4y(j)=(-two/beta*cos(pi*yeta(j))*sin(pi*yeta(j)))/two
-     enddo
-     do j=1,ny
-        ppyi(j)=yly*(alpha/pi+(one/pi/beta)*sin(pi*yetai(j))*sin(pi*yetai(j)))
-        pp2yi(j)=ppyi(j)*ppyi(j)
-        pp4yi(j)=(-two/beta*cos(pi*yetai(j))*sin(pi*yetai(j)))/two
-     enddo
-  endif
-
-  !   yp(1) = 0.0
-  !   yp(2) = 0.01
-  !   coeff0= 1.1
-  !   blender1 = 0.0
-  !   blender2 = 0.0
-  !   do j=3,ny
-  !!      yeta(j)=(j-1.)*(1./ny)
-  !!      yp(j)=-beta*cos(pi*yeta(j))/sin(yeta(j)*pi)
-  !
-  !     if (yp(j-1).LE.3.5*1.0) then
-  !       dy_plus_target = 8.0
-  !       !Calculate re_tau guess somewhere
-  !      dy_plus_current= (yp(j-1)-yp(j-2))*85.0
-  !       !dy_plus_coeff is from 1 to 0
-  !       dy_plus_coeff = (dy_plus_target-dy_plus_current)/dy_plus_target
-  !       coeff = coeff0**dy_plus_coeff
-  !
-  !       dy_plus_coeff_old1 = dy_plus_coeff   !will be required for blenders
-  !     else if (yp(j-1).GE.39.0*1.0) then
-  !       dy_plus_target = 10.0
-  !       !Calculate re_tau guess somewhere
-  !       dy_plus_current= (yp(j-1)-yp(j-2))*85.0
-  !       !dy_plus_coeff is from 1 to 0
-  !       dy_plus_coeff = (dy_plus_target-dy_plus_current)/dy_plus_target
-  !
-  !       if (blender2.LT.1.0) blender2 = blender2 + 0.1   !carry the coeff smoothly
-  !       coeff = coeff0**((1.0-blender2)*dy_plus_coeff_old2+blender2*dy_plus_coeff)
-  !     else
-  !       dy_plus_target = 80.0
-  !       !Calculate re_tau guess somewhere
-  !       dy_plus_current= (yp(j-1)-yp(j-2))*85.0
-  !       !dy_plus_coeff is from 1 to 0
-  !       dy_plus_coeff = (dy_plus_target-dy_plus_current)/dy_plus_target
-  !
-  !       if (blender1.LT.1.0) blender1 = blender1 + 0.1   !carry the coeff smoothly
-  !       coeff = coeff0**((1.0-blender1)*dy_plus_coeff_old1+blender1*dy_plus_coeff)
-  !
-  !       dy_plus_coeff_old2 = dy_plus_coeff   !will be required for blenders
-  !     endif
-  !     yp(j) = yp(j-1)+(yp(j-1)-yp(j-2))*coeff
-  !   enddo
-  !
-  !   !Normalize to yly
-  !   ypmax = yp(ny)
-  !   yp = yp/ypmax*yly
-
-  if (nrank == 0) then
-     open(10,file='yp.dat', form='formatted')
-     do j=1,ny
-        write(10,*)yp(j)
-     enddo
-     close(10)
-     open(10,file='ypi.dat', form='formatted')
-     do j=1,nym
-        write(10,*)ypi(j)
-     enddo
-     close(10)
-  endif
-
-end subroutine stretching
 !##################################################################
 !##################################################################
 subroutine inversion5_v1(aaa_in,eee,spI)
@@ -2023,7 +1848,7 @@ subroutine test_min_max(name,text,array_tmp,i_size_array_tmp)
   implicit none
 
   integer :: ierror, i, i_size_array_tmp
-  real(mytype) :: max_tmp, min_tmp, tot_tmp, max_tot, min_tot, tot_tot
+  real(mytype) :: max_tmp, min_tmp, tot_tmp
   real(mytype), dimension(i_size_array_tmp) :: array_tmp
   character(len=5) :: name
   character(len=15) :: text
@@ -2036,19 +1861,18 @@ subroutine test_min_max(name,text,array_tmp,i_size_array_tmp)
     tot_tmp=tot_tmp + array_tmp(i)
     min_tmp=min(min_tmp,array_tmp(i))
   enddo
-  call MPI_ALLREDUCE(max_tmp,max_tot,1,real_type,MPI_MAX,MPI_COMM_WORLD,ierror)
-  call MPI_ALLREDUCE(min_tmp,min_tot,1,real_type,MPI_MIN,MPI_COMM_WORLD,ierror)
-  call MPI_ALLREDUCE(tot_tmp,tot_tot,1,real_type,MPI_SUM,MPI_COMM_WORLD,ierror)
+  call MPI_ALLREDUCE(MPI_IN_PLACE,max_tmp,1,real_type,MPI_MAX,MPI_COMM_WORLD,ierror)
+  call MPI_ALLREDUCE(MPI_IN_PLACE,min_tmp,1,real_type,MPI_MIN,MPI_COMM_WORLD,ierror)
+  call MPI_ALLREDUCE(MPI_IN_PLACE,tot_tmp,1,real_type,MPI_SUM,MPI_COMM_WORLD,ierror)
   if (nrank == 0) then
      write(*,*) " "
-     write(*,*) trim(text)//' Max ',name,max_tot
-     write(*,*) trim(text)//' Tot ',name,tot_tot
-     write(*,*) trim(text)//' Min ',name,min_tot
+     write(*,*) trim(text)//' Max ',name,max_tmp
+     write(*,*) trim(text)//' Tot ',name,tot_tmp
+     write(*,*) trim(text)//' Min ',name,min_tmp
      write(*,*) " "
      flush(6)
   endif
 
-  return
 end subroutine test_min_max
 
 

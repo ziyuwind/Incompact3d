@@ -21,6 +21,7 @@ module case
   use sandbox
   use cavity
   use pipe
+  use ptbl
 
   use var, only : nzmsize
 
@@ -31,12 +32,15 @@ module case
   private ! All functions/subroutines private by default
   public :: init, boundary_conditions, &
             momentum_forcing, scalar_forcing, set_fluid_properties, &
-            test_flow, preprocessing, postprocessing, visu_case, visu_case_init
+            test_flow, preprocessing, postprocessing, visu_case, & 
+            visu_case_init, visu_case_finalise 
 
 contains
   !##################################################################
   subroutine init (rho1, ux1, uy1, uz1, ep1, phi1, drho1, dux1, duy1, duz1, dphi1, &
        pp3, px1, py1, pz1)
+
+    use particle, only : particle_init
 
 
     real(mytype),dimension(xsize(1),xsize(2),xsize(3)) :: ux1,uy1,uz1,ep1
@@ -111,6 +115,10 @@ contains
 
        call init_pipe(ux1, uy1, uz1, ep1, phi1)
 
+       elseif (itype.eq.itype_ptbl) then
+
+       call init_ptbl(ux1, uy1, uz1, phi1)
+
     else
   
          if (nrank.eq.0) then
@@ -137,6 +145,23 @@ contains
           dphi1(:,:,:,it,is) = phi1(:,:,:,is)
        enddo
     enddo
+
+    if(particle_active) then
+
+      select case(itype)
+
+      case(itype_channel)
+
+        call particle_init(pxmin=0.1_mytype,pxmax=0.1_mytype, &
+                           pzmin=1.5_mytype,pzmax=1.5_mytype)
+
+      case default
+
+        call particle_init()
+
+      end select
+
+    endif
 
   end subroutine init
   !##################################################################
@@ -194,6 +219,10 @@ contains
     elseif (itype.eq.itype_pipe) then
 
        call boundary_conditions_pipe (ux, uy, uz, phi)
+
+    elseif (itype.eq.itype_ptbl) then
+
+       call boundary_conditions_ptbl(ux, uy, uz, phi)
 
     endif
 
@@ -353,10 +382,14 @@ contains
 
        call postprocess_pipe(ux, uy, uz, pp, phi, ep)
 
+    elseif (itype.eq.itype_ptbl) then
+      
+       call postprocess_ptbl (ux, uy, uz, pp, phi, ep)
+
     endif
 
     if (iforces.eq.1) then
-       call force(ux,uy,ep)
+       call force(ux,uy,uz,ep)
        call restart_forces(1)
     endif
 
@@ -400,9 +433,24 @@ contains
 
        call visu_uniform_init(case_visu_init)      
 
+    else if (itype .eq. itype_ptbl) then
+
+       call visu_ptbl_init(case_visu_init)
+
     end if
     
   end subroutine visu_case_init
+  !-----------------------------------------------------------------
+  subroutine visu_case_finalise
+
+    implicit none
+  
+    if (itype .eq. itype_gravitycur) then
+
+       call visu_gravitycur_finalise()
+    
+    end if
+  end subroutine visu_case_finalise
   !##################################################################
   !!
   !!  SUBROUTINE: visu_case
@@ -414,6 +462,7 @@ contains
 
     use var, only : nzmsize
     use param, only : npress
+    use particle, only : visu_particle
 
     real(mytype), intent(in), dimension(xsize(1),xsize(2),xsize(3),nrhotime) :: rho1
     real(mytype), intent(in), dimension(xsize(1),xsize(2),xsize(3)) :: ux1,uy1,uz1
@@ -431,7 +480,7 @@ contains
        
     elseif (itype.eq.itype_tgv) then
 
-       call visu_tgv(ux1, uy1, uz1, pp3, phi1, ep1, num)
+       call visu_tgv(ux1, uy1, uz1, num)
        called_visu = .true.
 
     elseif (itype.eq.itype_channel) then
@@ -459,6 +508,11 @@ contains
        call visu_uniform(ux1, uy1, uz1, pp3, phi1, ep1, num)
        called_visu = .true.
 
+    elseif (itype.eq.itype_ptbl) then
+
+       call visu_ptbl(ux1, uy1, uz1, pp3, phi1, ep1, num)
+       called_visu = .true.
+
     endif
 
     if (called_visu .and. (.not. case_visu_init)) then
@@ -468,6 +522,8 @@ contains
        STOP
        
     endif
+
+    if(particle_active) call visu_particle(itime)
 
   end subroutine visu_case
   !##################################################################
@@ -481,7 +537,7 @@ contains
   !##################################################################
   subroutine momentum_forcing(dux1, duy1, duz1, rho1, ux1, uy1, uz1, phi1)
 
-    use mhd, only: mhd_active,momentum_forcing_mhd
+    use mhd, only: momentum_forcing_mhd
 
     implicit none
 
@@ -497,6 +553,10 @@ contains
     elseif (itype.eq.itype_abl) then
 
        call momentum_forcing_abl(dux1, duy1, duz1, ux1, uy1, uz1, phi1)
+
+    elseif (itype.eq.itype_ptbl) then
+
+       call momentum_forcing_ptbl(dux1, duy1, duz1, ux1, uy1, uz1, phi1)
 
     endif
 
@@ -525,6 +585,10 @@ contains
     if (itype.eq.itype_abl) then
 
        call scalar_forcing_abl(uy1, dphi1, phi1)
+
+    elseif (itype.eq.itype_ptbl) then
+
+       call scalar_forcing_ptbl(uy1, dphi1, phi1)
 
     endif
 

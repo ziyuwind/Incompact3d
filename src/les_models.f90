@@ -7,7 +7,8 @@ module les
   use decomp_2d_constants
   use decomp_2d_mpi
   use decomp_2d
-  use visu, only : gen_filename, output2D
+  use visu, only :  output2D
+  use utilities, only : gen_filename
 
   character(len=*), parameter :: io_turb = "turb-io", &
        turb_dir = "turb-data"
@@ -106,14 +107,15 @@ contains
     USE variables
     USE decomp_2d_io
     use var, only: nut1
-    USE abl, only: wall_sgs_slip, wall_sgs_noslip
+    use var, only: ta1, tb1, tc1
+    use abl, only: wall_sgs_slip, wall_sgs_noslip
     implicit none
 
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: ux1, uy1, uz1, ep1
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3), numscalar) :: phi1
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: sgsx1, sgsy1, sgsz1
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: wallfluxx1, wallfluxy1, wallfluxz1
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: wallsgsx1, wallsgsy1, wallsgsz1
+    real(mytype), dimension(xsize(1), xsize(2), xsize(3)), intent(in) :: ux1, uy1, uz1, ep1
+    real(mytype), dimension(xsize(1), xsize(2), xsize(3), numscalar), intent(in) :: phi1
+    real(mytype), dimension(xsize(1), xsize(2), xsize(3)), intent(out) :: sgsx1, sgsy1, sgsz1
+    !real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: w_fluxx1, w_fluxy1, w_fluxz1
+    !real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: w_sgsx1, w_sgsy1, w_gsz1
 
     ! Calculate eddy-viscosity
     if(jles.eq.1) then ! Smagorinsky
@@ -127,6 +129,8 @@ contains
 
     endif
 
+    ! we can store wallflux in ta1, tb1, tc1
+    ! this will be done in all call to wall_sgs_ for the ABL
     if(iconserv.eq.0) then ! Non-conservative form for calculating the divergence of the SGS stresses
        call sgs_mom_nonconservative(sgsx1,sgsy1,sgsz1,ux1,uy1,uz1,nut1,ep1)
 
@@ -134,19 +138,19 @@ contains
        if(itype.eq.itype_abl) then
           ! No-slip wall
           if (ncly1==2) then 
-             call wall_sgs_noslip(ux1,uy1,uz1,nut1,wallfluxx1,wallfluxy1,wallfluxz1)
+             call wall_sgs_noslip(ux1,uy1,uz1,nut1,ta1,tb1,tc1)
              if(xstart(2)==1) then
-               sgsx1(:,2,:) = -wallfluxx1(:,2,:)
-               sgsy1(:,2,:) = -wallfluxy1(:,2,:)
-               sgsz1(:,2,:) = -wallfluxz1(:,2,:)
+               sgsx1(:,2,:) = -ta1(:,2,:)
+               sgsy1(:,2,:) = -tb1(:,2,:)
+               sgsz1(:,2,:) = -tc1(:,2,:)
              endif
           ! Slip wall
           elseif (ncly1==1) then
-             call wall_sgs_slip(ux1,uy1,uz1,phi1,nut1,wallfluxx1,wallfluxy1,wallfluxz1)
+             call wall_sgs_slip(ux1,uy1,uz1,phi1,nut1,ta1,tb1,tc1)
              if(xstart(2)==1) then
-                sgsx1(:,1,:) = wallfluxx1(:,1,:)
-                sgsy1(:,1,:) = wallfluxy1(:,1,:)
-                sgsz1(:,1,:) = wallfluxz1(:,1,:)
+                sgsx1(:,1,:) = ta1(:,1,:)
+                sgsy1(:,1,:) = tb1(:,1,:)
+                sgsz1(:,1,:) = tc1(:,1,:)
              endif
           endif
        endif
@@ -190,8 +194,8 @@ contains
     real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: ux1, uy1, uz1
     real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: nut1
     real(mytype) :: smag_constant, y, length
-    real(mytype) :: nutmin_loc, nutmax_loc, nutmin, nutmax
-    real(mytype) :: srtmin_loc, srtmax_loc, srtmin, srtmax
+    real(mytype) :: nutmin, nutmax
+    real(mytype) :: srtmin, srtmax
 
     integer :: i, j, k, ierr
     character(len = 30) :: filename
@@ -284,19 +288,19 @@ contains
 
 
     if (mod(itime,ilist)==0) then 
-      srtmin_loc = minval(srt_smag)
-      srtmax_loc = maxval(srt_smag)
-      nutmin_loc = minval(nut1)
-      nutmax_loc = maxval(nut1)
+      srtmin = minval(srt_smag)
+      srtmax = maxval(srt_smag)
+      nutmin = minval(nut1)
+      nutmax = maxval(nut1)
       srtmin = zero
       srtmax = zero
       nutmin = zero
       nutmax = zero
 
-      call MPI_ALLREDUCE(srtmin_loc,srtmin,1,real_type,MPI_MIN,MPI_COMM_WORLD,ierr)
-      call MPI_ALLREDUCE(nutmin_loc,nutmin,1,real_type,MPI_MIN,MPI_COMM_WORLD,ierr)
-      call MPI_ALLREDUCE(srtmax_loc,srtmax,1,real_type,MPI_MAX,MPI_COMM_WORLD,ierr)
-      call MPI_ALLREDUCE(nutmax_loc,nutmax,1,real_type,MPI_MAX,MPI_COMM_WORLD,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,srtmin,1,real_type,MPI_MIN,MPI_COMM_WORLD,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,nutmin,1,real_type,MPI_MIN,MPI_COMM_WORLD,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,srtmax,1,real_type,MPI_MAX,MPI_COMM_WORLD,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,nutmax,1,real_type,MPI_MAX,MPI_COMM_WORLD,ierr)
 
       if (mod(itime, ilist) == 0) then
          if (nrank==0) then 
@@ -612,6 +616,8 @@ contains
     bbxz1 = -two * sqrt(two * (sxx1f * sxx1f + syy1f * syy1f + szz1f * szz1f + two * sxy1f * sxy1f + two * sxz1f * sxz1f + two * syz1f * syz1f)) * sxz1f
     bbyz1 = -two * sqrt(two * (sxx1f * sxx1f + syy1f * syy1f + szz1f * szz1f + two * sxy1f * sxy1f + two * sxz1f * sxz1f + two * syz1f * syz1f)) * syz1f
 
+    call smag(nut1,ux1,uy1,uz1) ! to update the Aij tensor
+
     !Aij tensor with u
     axx1 = -two * sqrt(two * (sxx1 * sxx1 + syy1 * syy1 + szz1 * szz1 + two * sxy1 * sxy1 + two * sxz1 * sxz1 + two * syz1 * syz1)) * sxx1
     ayy1 = -two * sqrt(two * (sxx1 * sxx1 + syy1 * syy1 + szz1 * szz1 + two * sxy1 * sxy1 + two * sxz1 * sxz1 + two * syz1 * syz1)) * syy1
@@ -864,7 +870,6 @@ contains
        call decomp_2d_start_io(io_turb, turb_dir)
     end if
 #endif
-    call smag(nut1,ux1,uy1,uz1)
 
     call transpose_x_to_y(srt_smag, srt_smag2)
     call transpose_x_to_y(dsmagcst1, dsmagcst2)
@@ -1107,15 +1112,15 @@ end subroutine wale
     
     implicit none
 
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: ux1, uy1, uz1, nut1, ep1
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: sgsx1, sgsy1, sgsz1
+    real(mytype), dimension(xsize(1), xsize(2), xsize(3)),intent(in) :: ux1, uy1, uz1, nut1, ep1
+    real(mytype), dimension(xsize(1), xsize(2), xsize(3)),intent(out):: sgsx1, sgsy1, sgsz1
 
     integer :: i, j, k, ijk, nvect1
 
     ta1 = zero; ta2 = zero; ta3 = zero
-    sgsx1=zero;sgsy1=zero;sgsz1=zero
-    sgsx2=zero;sgsy2=zero;sgsz2=zero
-    sgsx3=zero;sgsy3=zero;sgsz3=zero
+    sgsx1=zero; sgsy1=zero; sgsz1=zero
+    sgsx2=zero; sgsy2=zero; sgsz2=zero
+    sgsx3=zero; sgsy3=zero; sgsz3=zero
     !WORK X-PENCILS
     call derx (ta1,nut1,di1,sx,ffxp,fsxp,fwxp,xsize(1),xsize(2),xsize(3),1,zero)
 
@@ -1325,8 +1330,11 @@ end subroutine wale
     USE variables
     use MPI
     USE var, only : ta1,tb1,tc1,di1
+    use var, only : td1, te1, tf1, tg1, th1, ti1
     USE var, only : ta2,tb2,tc2,di2
+    use var, only :      te2, tf2, tg2, th2, ti2
     USE var, only : ta3,tb3,tc3,di3
+    use var, only :           tf3,      th3, ti3
     USE var, only : sgsx2,sgsy2,sgsz2
     USE var, only : sgsx3,sgsy3,sgsz3
     USE var, only : sxx1,sxy1,sxz1,syy1,syz1,szz1
@@ -1335,37 +1343,36 @@ end subroutine wale
     
     implicit none 
 
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: ux1, uy1, uz1, nut1
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: sgsx1, sgsy1, sgsz1
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: wallsgsx1, wallsgsy1, wallsgsz1
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: txx1, txy1, txz1, tyy1, tyz1, tzz1 
-    real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: taf1, tbf1, tcf1
-    real(mytype), dimension(ysize(1), ysize(2), ysize(3)) :: txy2, txz2, tyy2, tyz2, tzz2 
-    real(mytype), dimension(ysize(1), ysize(2), ysize(3)) :: taf2, tbf2, tcf2
-    real(mytype), dimension(zsize(1), zsize(2), zsize(3)) :: txz3, tyz3, tzz3 
-    real(mytype), dimension(zsize(1), zsize(2), zsize(3)) :: taf3, tbf3, tcf3 
+    real(mytype), dimension(xsize(1), xsize(2), xsize(3)),intent(in) :: ux1, uy1, uz1, nut1
+    real(mytype), dimension(xsize(1), xsize(2), xsize(3)),intent(out) :: sgsx1, sgsy1, sgsz1
 
+    !                                                         ta1        tb1        tc1 
+    !real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: wallsgsx1, wallsgsy1, wallsgsz1
+    !
+    !                                                         td1  te1  tf1  tg1  th1  ti1         
+    !real(mytype), dimension(xsize(1), xsize(2), xsize(3)) :: txx, txy, txz, tyy, tyz, tzz 
+    
     integer :: i, j, k, code, ierr
     
     ! Construct stress tensor
-    txx1 = 2.0*nut1*sxx1
-    txy1 = 2.0*nut1*sxy1
-    txz1 = 2.0*nut1*sxz1
-    tyy1 = 2.0*nut1*syy1
-    tyz1 = 2.0*nut1*syz1
-    tzz1 = 2.0*nut1*szz1   
+    td1 = 2.0*nut1*sxx1
+    te1 = 2.0*nut1*sxy1
+    tf1 = 2.0*nut1*sxz1
+    tg1 = 2.0*nut1*syy1
+    th1 = 2.0*nut1*syz1
+    ti1 = 2.0*nut1*szz1   
     
     ! Add wall model for ABL
     if (itype.eq.itype_abl) then
       if (ncly1==2) then 
-        call wall_sgs_noslip(ux1,uy1,uz1,nut1,wallsgsx1,wallsgsy1,wallsgsz1)
+        call wall_sgs_noslip(ux1,uy1,uz1,nut1,ta1,tb1,tc1)
         if (xstart(2)==1) then
-          txx1(:,2,:) = 0.
-          txy1(:,2,:) = - wallsgsx1(:,2,:)! txy1(:,2,:)
-          txz1(:,2,:) = 0.
-          tyy1(:,2,:) = 0.
-          tyz1(:,2,:) = - wallsgsz1(:,2,:)! tyz1(:,2,:)
-          tzz1(:,2,:) = 0.
+          td1(:,2,:) = 0.
+          te1(:,2,:) = - ta1(:,2,:)! txy1(:,2,:)
+          tf1(:,2,:) = 0.
+          tg1(:,2,:) = 0.
+          th1(:,2,:) = - tc1(:,2,:)! tyz1(:,2,:)
+          ti1(:,2,:) = 0.
         endif
       elseif (ncly1==1) then 
         write(*,*) 'Simulation stopped: slip bottom wall not supported with iconserv=1'
@@ -1377,37 +1384,38 @@ end subroutine wale
     ta1 = zero; ta2 = zero; ta3 = zero
     tb1 = zero; tb2 = zero; tb3 = zero
     tc1 = zero; tc2 = zero; tc3 = zero
-    sgsx1=0.;sgsy1=0.;sgsz1=0.
-    sgsx2=0.;sgsy2=0.;sgsz2=0.
-    sgsx3=0.;sgsy3=0.;sgsz3=0.
+    sgsx1=zero; sgsy1=zero; sgsz1=zero
+    sgsx2=zero; sgsy2=zero; sgsz2=zero
+    sgsx3=zero; sgsy3=zero; sgsz3=zero
 
     ! WORK X-PENCILS
-    call derx (ta1,txx1,di1,sx,ffx,fsx,fwx,xsize(1),xsize(2),xsize(3),0,zero)
-    call derx (tb1,txy1,di1,sx,ffx,fsx,fwx,xsize(1),xsize(2),xsize(3),0,zero)
-    call derx (tc1,txz1,di1,sx,ffx,fsx,fwx,xsize(1),xsize(2),xsize(3),0,zero)
+    call derx (sgsx1,td1,di1,sx,ffx,fsx,fwx,xsize(1),xsize(2),xsize(3),0,zero)
+    call derx (sgsy1,te1,di1,sx,ffx,fsx,fwx,xsize(1),xsize(2),xsize(3),0,zero)
+    call derx (sgsz1,tf1,di1,sx,ffx,fsx,fwx,xsize(1),xsize(2),xsize(3),0,zero)
 
     !call filter(0.48d0)
     !call filx(taf1,ta1,di1,fisx,fiffxp,fifsxp,fifwxp,xsize(1),xsize(2),xsize(3),1,zero)
     !call filx(tbf1,tb1,di1,fisx,fiffxp,fifsxp,fifwxp,xsize(1),xsize(2),xsize(3),1,zero)
     !call filx(tcf1,tc1,di1,fisx,fiffxp,fifsxp,fifwxp,xsize(1),xsize(2),xsize(3),1,zero)
 
-    sgsx1 = ta1
-    sgsy1 = tb1
-    sgsz1 = tc1
+    ! Stored into var immediatly not here
+    !sgsx1 = ta1
+    !sgsy1 = tb1
+    !sgsz1 = tc1
 
     ! WORK Y-PENCILS
-    call transpose_x_to_y(txy1, txy2)
-    call transpose_x_to_y(tyy1, tyy2)
-    call transpose_x_to_y(tyz1, tyz2)
-    call transpose_x_to_y(txz1, txz2)
-    call transpose_x_to_y(tzz1, tzz2)
+    call transpose_x_to_y(te1, te2)
+    call transpose_x_to_y(tg1, tg2)
+    call transpose_x_to_y(th1, th2)
+    call transpose_x_to_y(tf1, tf2)
+    call transpose_x_to_y(ti1, ti2)
     call transpose_x_to_y(sgsx1, sgsx2)
     call transpose_x_to_y(sgsy1, sgsy2)
     call transpose_x_to_y(sgsz1, sgsz2)
 
-    call dery (ta2,txy2,di2,sy,ffy,fsy,fwy,ppy,ysize(1),ysize(2),ysize(3),0,zero)
-    call dery (tb2,tyy2,di2,sy,ffyp,fsyp,fwyp,ppy,ysize(1),ysize(2),ysize(3),1,zero)
-    call dery (tc2,tyz2,di2,sy,ffy,fsy,fwy,ppy,ysize(1),ysize(2),ysize(3),0,zero)
+    call dery (ta2,te2,di2,sy,ffy,fsy,fwy,ppy,ysize(1),ysize(2),ysize(3),0,zero)
+    call dery (tb2,tg2,di2,sy,ffyp,fsyp,fwyp,ppy,ysize(1),ysize(2),ysize(3),1,zero)
+    call dery (tc2,th2,di2,sy,ffy,fsy,fwy,ppy,ysize(1),ysize(2),ysize(3),0,zero)
 
     !call fily(taf2,ta2,di2,fisy,fiffyp,fifsyp,fifwyp,ysize(1),ysize(2),ysize(3),1,zero)
     !call fily(tbf2,tb2,di2,fisy,fiffyp,fifsyp,fifwyp,ysize(1),ysize(2),ysize(3),1,zero)
@@ -1421,13 +1429,13 @@ end subroutine wale
     call transpose_y_to_z(sgsx2, sgsx3)
     call transpose_y_to_z(sgsy2, sgsy3)
     call transpose_y_to_z(sgsz2, sgsz3)
-    call transpose_y_to_z(txz2, txz3)
-    call transpose_y_to_z(tyz2, tyz3)
-    call transpose_y_to_z(tzz2, tzz3)
+    call transpose_y_to_z(tf2, tf3)
+    call transpose_y_to_z(th2, th3)
+    call transpose_y_to_z(ti2, ti3)
 
-    call derz (ta3, txz3, di3, sz, ffz, fsz, fwz, zsize(1), zsize(2), zsize(3), 0, zero)
-    call derz (tb3, tyz3, di3, sz, ffz, fsz, fwz, zsize(1), zsize(2), zsize(3), 0, zero)
-    call derz (tc3, tzz3, di3, sz, ffz, fsz, fwz, zsize(1), zsize(2), zsize(3), 0, zero)
+    call derz (ta3, tf3, di3, sz, ffz, fsz, fwz, zsize(1), zsize(2), zsize(3), 0, zero)
+    call derz (tb3, th3, di3, sz, ffz, fsz, fwz, zsize(1), zsize(2), zsize(3), 0, zero)
+    call derz (tc3, ti3, di3, sz, ffz, fsz, fwz, zsize(1), zsize(2), zsize(3), 0, zero)
 
     !call filz(taf3,ta3,di3,fisz,fiffzp,fifszp,fifwzp,zsize(1),zsize(2),zsize(3),1,zero)
     !call filz(tbf3,tb3,di3,fisz,fiffzp,fifszp,fifwzp,zsize(1),zsize(2),zsize(3),1,zero)

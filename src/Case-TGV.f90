@@ -28,7 +28,8 @@ contains
     use variables
     use param
     use MPI
-    use mhd, only: mhd_active,Bm,Bmean
+    use mhd,  only: Bm,Bmean
+    use visu, only: write_snapshot, end_snapshot
 
     implicit none
 
@@ -67,17 +68,24 @@ contains
              do i=1,xsize(1)
                 x=real(i-1,mytype)*dx
                 if(mhd_active) then
-                   ux1(i,j,k)= -two*sin(y)*cos(z)
-                   uy1(i,j,k)=  two*sin(x)*cos(z)
-                   uz1(i,j,k)=zero
                    !
-                   Bm(i,j,k,1)=-two*sin(y)
-                   Bm(i,j,k,2)= two*sin(two*x)
-                   Bm(i,j,k,3)=zero
+                   ! OTV
+                   ux1(i,j,k)=-two*sin(y)
+                   uy1(i,j,k)= two*sin(x)
+                   uz1(i,j,k)= zero
                    !
-                   Bmean(i,j,k,1)=zero
-                   Bmean(i,j,k,2)=zero
-                   Bmean(i,j,k,3)=zero
+                   if(nz<=2) then
+                     ! 2D OTV
+                     Bm(i,j,k,1)=-two*sin(y)
+                     Bm(i,j,k,2)= two*sin(two*x)
+                     Bm(i,j,k,3)= zero
+                   else
+                     ! 3D OTV
+                     Bm(i,j,k,1)= 0.8_mytype*(-two*sin(two*y) + sin(z))
+                     Bm(i,j,k,2)= 0.8_mytype*( two*sin(x)     + sin(z))
+                     Bm(i,j,k,3)= 0.8_mytype*(     sin(x)     + sin(y))
+                    endif
+                    !
                 else
                    ux1(i,j,k)=+sin(x)*cos(y)*cos(z)
                    uy1(i,j,k)=-cos(x)*sin(y)*cos(z)
@@ -89,55 +97,7 @@ contains
              enddo
           enddo
        enddo
-
-       call random_seed(size=isize)
-       allocate (seed(isize))
-       seed(:)=67
-       call random_seed(put=seed)
-       !     call random_number(ux1)
-       !     call random_number(uy1)
-       ! call random_number(uz1)
-
-       do k=1,xsize(3)
-          do j=1,xsize(2)
-             do i=1,xsize(1)
-                !              ux1(i,j,k)=noise*(ux1(i,j,k)-half)
-                !              uy1(i,j,k)=noise*(uy1(i,j,k)-half)
-                ! uz1(i,j,k)=0.05*(uz1(i,j,k)-half)
-             enddo
-          enddo
-       enddo
-
-       !     !modulation of the random noise
-       !     do k=1,xsize(3)
-       !        do j=1,xsize(2)
-       !           if (istret.eq.0) y=(j+xstart(2)-1-1)*dy-yly/two
-       !           if (istret.ne.0) y=yp(j+xstart(2)-1)-yly/two
-       !           um=exp(-0.2*y*y)
-       !           do i=1,xsize(1)
-       !              ux1(i,j,k)=um*ux1(i,j,k)
-       !              uy1(i,j,k)=um*uy1(i,j,k)
-       !              uz1(i,j,k)=um*uz1(i,j,k)
-       !           enddo
-       !        enddo
-       !     enddo
-
     endif
-
-    !  bxx1(j,k)=zero
-    !  bxy1(j,k)=zero
-    !  bxz1(j,k)=zero
-
-    !INIT FOR G AND U=MEAN FLOW + NOISE
-    do k=1,xsize(3)
-       do j=1,xsize(2)
-          do i=1,xsize(1)
-             ux1(i,j,k)=ux1(i,j,k)!+bxx1(j,k)
-             uy1(i,j,k)=uy1(i,j,k)!+bxy1(j,k)
-             uz1(i,j,k)=uz1(i,j,k)!+bxz1(j,k)
-          enddo
-       enddo
-    enddo
 
 #ifdef DEBG
     if (nrank  ==  0) write(*,*) '# init end ok'
@@ -236,13 +196,15 @@ contains
     USE var, only : ta1,tb1,tc1,td1,te1,tf1,tg1,th1,ti1,di1
     USE var, only : ta2,tb2,tc2,td2,te2,tf2,di2,ta3,tb3,tc3,td3,te3,tf3,di3
     USE ibm_param
+    use mhd, only : Bm,Je,Rem
 
     real(mytype),intent(in),dimension(xsize(1),xsize(2),xsize(3)) :: ux1, uy1, uz1,ep1
     real(mytype),intent(in),dimension(xsize(1),xsize(2),xsize(3),numscalar) :: phi1
     real(mytype) :: mp(numscalar),mps(numscalar),vl,es,es1,ek,ek1,ds,ds1
-    real(mytype) :: temp1, temp2, temp3, temp4, temp5, temp6, temp7, temp8, temp9
 
+    real(mytype), allocatable, dimension(:,:,:) :: bx2,by2,bz2,bx3,by3,bz3
     real(mytype) :: eek, enst, eps, eps2
+    real(mytype) :: eem,omegam,jmax,disb,omegab
     integer :: nxc, nyc, nzc, xsize1, xsize2, xsize3
 
     integer :: i,j,k,is,code,nvect1
@@ -322,47 +284,47 @@ contains
        !dw/dx=tc1 dw/dy=tf1 and dw/dz=ti1
 
        !SPATIALLY-AVERAGED ENSTROPHY
-       temp1=zero
+       enst=zero
        do k=1,xsize3
           do j=1,xsize2
              do i=1,xsize1
-                temp1=temp1+zpfive*((tf1(i,j,k)-th1(i,j,k))**2+&
+                enst=enst+zpfive*((tf1(i,j,k)-th1(i,j,k))**2+&
                                     (tg1(i,j,k)-tc1(i,j,k))**2+&
                                     (tb1(i,j,k)-td1(i,j,k))**2)
              enddo
           enddo
        enddo
-       call MPI_ALLREDUCE(temp1,enst,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
+       call MPI_ALLREDUCE(MPI_IN_PLACE,enst,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
        enst=enst/(nxc*nyc*nzc)
        
        !SPATIALLY-AVERAGED ENERGY DISSIPATION
-       temp1=zero
+       eps=zero
        do k=1,xsize3
           do j=1,xsize2
              do i=1,xsize1
-                temp1=temp1+half*xnu*((two*ta1(i,j,k))**two+(two*te1(i,j,k))**two+&
+                eps=eps+half*xnu*((two*ta1(i,j,k))**two+(two*te1(i,j,k))**two+&
                                       (two*ti1(i,j,k))**two+two*(td1(i,j,k)+tb1(i,j,k))**two+&
                                                             two*(tg1(i,j,k)+tc1(i,j,k))**two+&
                                                             two*(th1(i,j,k)+tf1(i,j,k))**two)
                 if (ilesmod /= 0 .and. jles <= 3) then
-                   temp1=temp1+two*nut1(i,j,k)*srt_smag(i,j,k)
+                   eps=eps+two*nut1(i,j,k)*srt_smag(i,j,k)
                 endif
              enddo
           enddo
        enddo
-       call MPI_ALLREDUCE(temp1,eps,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
+       call MPI_ALLREDUCE(MPI_IN_PLACE,eps,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
        eps=eps/(nxc*nyc*nzc)
 
        !SPATIALLY-AVERAGED TKE of velocity fields
-       temp1=zero
+       eek=zero
        do k=1,xsize3
           do j=1,xsize2
              do i=1,xsize1
-                temp1=temp1+zpfive*((ux1(i,j,k))**2+(uy1(i,j,k))**2+(uz1(i,j,k))**2)
+                eek=eek+zpfive*((ux1(i,j,k))**2+(uy1(i,j,k))**2+(uz1(i,j,k))**2)
              enddo
           enddo
        enddo
-       call MPI_ALLREDUCE(temp1,eek,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
+       call MPI_ALLREDUCE(MPI_IN_PLACE,eek,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
        eek=eek/(nxc*nyc*nzc)
 
        !SECOND DERIVATIVES
@@ -392,7 +354,7 @@ contains
        !d2v/dx2=tb1 d2v/dy2=te1 and d2v/dz2=th1
        !d2w/dx2=tc1 d2w/dy2=tf1 and d2w/dz2=ti1
        !SPATIALLY-AVERAGED ENERGY DISSIPATION WITH SECOND DERIVATIVES
-       temp1=zero
+       eps2=zero
        di1  =zero
        do k=1,xsize3
           do j=1,xsize2
@@ -400,11 +362,11 @@ contains
                 di1(i,j,k)=(-xnu)*( ux1(i,j,k)*(ta1(i,j,k)+td1(i,j,k)+tg1(i,j,k))+ &
                                     uy1(i,j,k)*(tb1(i,j,k)+te1(i,j,k)+th1(i,j,k))+ &
                                     uz1(i,j,k)*(tc1(i,j,k)+tf1(i,j,k)+ti1(i,j,k)) )
-                temp1=temp1+di1(i,j,k)
+                eps2=eps2+di1(i,j,k)
              enddo
           enddo
        enddo
-       call MPI_ALLREDUCE(temp1,eps2,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
+       call MPI_ALLREDUCE(MPI_IN_PLACE,eps2,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
        eps2=eps2/(nxc*nyc*nzc)
        
        
@@ -412,6 +374,100 @@ contains
           write(42,'(20e20.12)') (itime-1)*dt,eek,eps,eps2,enst
           flush(42)
        endif
+
+       if(mhd_active) then
+
+          !SPATIALLY-AVERAGING
+          eem=zero
+          omegam=zero
+          do k=1,xsize3
+             do j=1,xsize2
+                do i=1,xsize1
+                   eem=eem+zpfive*((Bm(i,j,k,1))**2+(Bm(i,j,k,2))**2+(Bm(i,j,k,3))**2)
+                   omegam=omegam+zpfive*Je(i,j,k,1)**2+Je(i,j,k,2)**2+Je(i,j,k,3)**2
+                enddo
+             enddo
+          enddo
+          call MPI_ALLREDUCE(MPI_IN_PLACE,eem,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
+          call MPI_ALLREDUCE(MPI_IN_PLACE,omegam,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
+          eem=eem/(nxc*nyc*nzc)
+          omegam=omegam/(nxc*nyc*nzc)*Rem*Rem
+
+          !
+          call alloc_y(bx2)
+          bx2=zero
+          call alloc_y(by2)
+          by2=zero
+          call alloc_y(bz2)
+          bz2=zero
+
+          call alloc_z(bx3)
+          bx3=zero
+          call alloc_z(by3)
+          by3=zero
+          call alloc_z(bz3)
+          bz3=zero
+          !
+
+          call transpose_x_to_y(Bm(:,:,:,1),bx2)
+          call transpose_x_to_y(Bm(:,:,:,2),by2)
+          call transpose_x_to_y(Bm(:,:,:,3),bz2)
+          call transpose_y_to_z(bx2,bx3)
+          call transpose_y_to_z(by2,by3)
+          call transpose_y_to_z(bz2,bz3)
+
+          !x-derivatives
+          call derx (ta1,Bm(:,:,:,1),di1,sx,ffx,fsx,fwx,xsize(1),xsize(2),xsize(3),0,ubcx)
+          call derx (tb1,Bm(:,:,:,2),di1,sx,ffxp,fsxp,fwxp,xsize(1),xsize(2),xsize(3),1,ubcy)
+          call derx (tc1,Bm(:,:,:,3),di1,sx,ffxp,fsxp,fwxp,xsize(1),xsize(2),xsize(3),1,ubcz)
+          !y-derivatives
+          call dery (ta2,bx2,di2,sy,ffyp,fsyp,fwyp,ppy,ysize(1),ysize(2),ysize(3),1,ubcx)
+          call dery (tb2,by2,di2,sy,ffy,fsy,fwy,ppy,ysize(1),ysize(2),ysize(3),0,ubcy)
+          call dery (tc2,bz2,di2,sy,ffyp,fsyp,fwyp,ppy,ysize(1),ysize(2),ysize(3),1,ubcz)
+          !!z-derivatives
+          call derz (ta3,bx3,di3,sz,ffzp,fszp,fwzp,zsize(1),zsize(2),zsize(3),1,ubcx)
+          call derz (tb3,by3,di3,sz,ffzp,fszp,fwzp,zsize(1),zsize(2),zsize(3),1,ubcy)
+          call derz (tc3,bz3,di3,sz,ffz,fsz,fwz,zsize(1),zsize(2),zsize(3),0,ubcz)
+          !!all back to x-pencils
+          call transpose_z_to_y(ta3,td2)
+          call transpose_z_to_y(tb3,te2)
+          call transpose_z_to_y(tc3,tf2)
+          call transpose_y_to_x(td2,tg1)
+          call transpose_y_to_x(te2,th1)
+          call transpose_y_to_x(tf2,ti1)
+          call transpose_y_to_x(ta2,td1)
+          call transpose_y_to_x(tb2,te1)
+          call transpose_y_to_x(tc2,tf1)
+
+          !SPATIALLY-AVERAGED ENERGY DISSIPATION
+          disb=zero
+          omegab=zero
+          do k=1,xsize3
+             do j=1,xsize2
+                do i=1,xsize1
+                   disb=disb+half/rem*((two*ta1(i,j,k))**two+(two*te1(i,j,k))**two+&
+                                         (two*ti1(i,j,k))**two+two*(td1(i,j,k)+tb1(i,j,k))**two+&
+                                                               two*(tg1(i,j,k)+tc1(i,j,k))**two+&
+                                                               two*(th1(i,j,k)+tf1(i,j,k))**two)
+                   omegab=omegab+zpfive*((tf1(i,j,k)-th1(i,j,k))**2+&
+                                       (tg1(i,j,k)-tc1(i,j,k))**2+&
+                                       (tb1(i,j,k)-td1(i,j,k))**2)
+                enddo
+             enddo
+          enddo
+          call MPI_ALLREDUCE(MPI_IN_PLACE,disb,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
+          disb=disb/(nxc*nyc*nzc)
+
+          call MPI_ALLREDUCE(MPI_IN_PLACE,omegab,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
+          omegab=omegab/(nxc*nyc*nzc)
+
+          if (nrank==0) then
+             write(43,'(20e20.12)')(itime-1)*dt,eem,omegam,omegab,disb
+             flush(43)
+          endif
+
+       endif
+
     endif
 
   end subroutine postprocess_tgv
@@ -427,7 +483,6 @@ contains
 
     use decomp_2d_io, only : decomp_2d_register_variable
     use visu, only : io_name, output2D
-    use mhd, only : mhd_active
     
     implicit none
 
@@ -440,6 +495,7 @@ contains
        call decomp_2d_register_variable(io_name, "J_x", 1, 0, output2D, mytype)
        call decomp_2d_register_variable(io_name, "J_y", 1, 0, output2D, mytype)
        call decomp_2d_register_variable(io_name, "J_z", 1, 0, output2D, mytype)
+       !
        call decomp_2d_register_variable(io_name, "B_x", 1, 0, output2D, mytype)
        call decomp_2d_register_variable(io_name, "B_y", 1, 0, output2D, mytype)
        call decomp_2d_register_variable(io_name, "B_z", 1, 0, output2D, mytype)
@@ -455,22 +511,19 @@ contains
   !! DESCRIPTION: Performs TGV-specific visualization
   !!
   !############################################################################
-  subroutine visu_tgv(ux1, uy1, uz1, pp3, phi1, ep1, num)
+  subroutine visu_tgv(ux1, uy1, uz1, num)
 
     use var, only : ux2, uy2, uz2, ux3, uy3, uz3
     USE var, only : ta1,tb1,tc1,td1,te1,tf1,tg1,th1,ti1,di1
     USE var, only : ta2,tb2,tc2,td2,te2,tf2,di2,ta3,tb3,tc3,td3,te3,tf3,di3
     use var, ONLY : nxmsize, nymsize, nzmsize
     use visu, only : write_field
-    use mhd, only : mhd_active,Bm
+    use mhd, only : Bm,Je,del_cross_prod,rem
     use ibm_param, only : ubcx,ubcy,ubcz
 
     implicit none
 
     real(mytype), intent(in), dimension(xsize(1),xsize(2),xsize(3)) :: ux1, uy1, uz1
-    real(mytype), intent(in), dimension(ph1%zst(1):ph1%zen(1),ph1%zst(2):ph1%zen(2),nzmsize,npress) :: pp3
-    real(mytype), intent(in), dimension(xsize(1),xsize(2),xsize(3),numscalar) :: phi1
-    real(mytype), intent(in), dimension(xsize(1),xsize(2),xsize(3)) :: ep1
     integer, intent(in) :: num
 
     ! Write vorticity as an example of post processing
@@ -520,7 +573,7 @@ contains
 
     !Q=-0.5*(ta1**2+te1**2+ti1**2)-td1*tb1-tg1*tc1-th1*tf1
     di1 = zero
-    di1(:,:,: ) = - 0.5*(ta1(:,:,:)**2+te1(:,:,:)**2+ti1(:,:,:)**2) &
+    di1(:,:,: ) = - zpfive*(ta1(:,:,:)**2+te1(:,:,:)**2+ti1(:,:,:)**2) &
                   - td1(:,:,:)*tb1(:,:,:) &
                   - tg1(:,:,:)*tc1(:,:,:) &
                   - th1(:,:,:)*tf1(:,:,:)
@@ -530,6 +583,12 @@ contains
       call write_field(Bm(:,:,:,1), ".", "B_x", num, flush = .true.)
       call write_field(Bm(:,:,:,2), ".", "B_y", num, flush = .true.)
       call write_field(Bm(:,:,:,3), ".", "B_z", num, flush = .true.)
+
+      je=del_cross_prod(Bm)/Rem
+
+      call write_field(Je(:,:,:,1), ".", "J_x", num, flush = .true.)
+      call write_field(Je(:,:,:,2), ".", "J_y", num, flush = .true.)
+      call write_field(Je(:,:,:,3), ".", "J_z", num, flush = .true.)
     endif
 
   end subroutine visu_tgv
@@ -887,21 +946,21 @@ contains
   end subroutine compute_k2
 
   ! Compute L1, L2 and Linf norm of given 3D array
-  subroutine error_L1_L2_Linf(err, l1, l2, linf)
+  subroutine error_L1_L2_Linf(err, ll1, ll2, linf)
 
     USE MPI
     
     implicit none
       
     real(mytype),intent(in),dimension(xsize(1),xsize(2),xsize(3)) :: err
-    real(mytype),intent(out) :: l1, l2, linf
+    real(mytype) :: ll1, ll2, linf
 
     integer :: i,j,k,code
-    real(mytype) :: ll1, ll2, llinf, ntot
+    real(mytype) :: ntot
 
     ll1 = zero
     ll2 = zero
-    llinf = zero
+    linf = zero
     ntot = nx*ny*nz
 
     do k = 1,xsize(3)
@@ -909,19 +968,19 @@ contains
         do i = 1,xsize(1)
           ll1 = ll1 + abs(err(i,j,k))
           ll2 = ll2 + err(i,j,k)*err(i,j,k)
-          llinf = max(llinf, abs(err(i,j,k)))
+          linf = max(linf, abs(err(i,j,k)))
         enddo
       enddo
     enddo
 
     ! Parallel
-    call MPI_ALLREDUCE(ll1,l1,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
-    call MPI_ALLREDUCE(ll2,l2,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
-    call MPI_ALLREDUCE(llinf,linf,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
+    call MPI_ALLREDUCE(MPI_IN_PLACE,ll1,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
+    call MPI_ALLREDUCE(MPI_IN_PLACE,ll2,1,real_type,MPI_SUM,MPI_COMM_WORLD,code)
+    call MPI_ALLREDUCE(MPI_IN_PLACE,linf,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
 
     ! Rescaling
-    l1 = l1 / ntot
-    l2 = sqrt(l2 / ntot)
+    ll1 = ll1 / ntot
+    ll2 = sqrt(ll2 / ntot)
 
   end subroutine error_L1_L2_Linf
 

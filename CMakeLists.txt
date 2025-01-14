@@ -62,11 +62,9 @@ option(BUILD_TESTING_FULL "Build all tests" OFF)
 if (${BUILD_TESTING})
   include(CTest)
   add_subdirectory(examples)
-  add_subdirectory(test) 
+  add_subdirectory(tests) 
 endif (${BUILD_TESTING})
 
 # Add a prettify target
 #add_custom_target(format sh ${CMAKE_SOURCE_DIR}/scripts/format.sh
 #  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-
-

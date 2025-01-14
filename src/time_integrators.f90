@@ -36,19 +36,19 @@ contains
     integer :: is, code, ierror
 
 #ifdef DEBG
-    real(mytype) :: dep, dep1
+    real(mytype) :: dep
 #endif
     
 #ifdef DEBG
     dep=maxval(abs(var1))
-    call MPI_ALLREDUCE(dep,dep1,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
-    if (nrank == 0) write(*,*)'## SUB intt VAR var1 (start) MAX ', dep1
+    call MPI_ALLREDUCE(MPI_IN_PLACE,dep,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
+    if (nrank == 0) write(*,*)'## SUB intt VAR var1 (start) MAX ', dep
     dep=maxval(abs(dvar1(:,:,:,1)))
-    call MPI_ALLREDUCE(dep,dep1,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
-    if (nrank == 0) write(*,*)'## SUB intt VAR dvar1(1) (start) MAX ', dep1
+    call MPI_ALLREDUCE(MPI_IN_PLACE,dep,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
+    if (nrank == 0) write(*,*)'## SUB intt VAR dvar1(1) (start) MAX ', dep
     dep=maxval(abs(dvar1(:,:,:,2)))
-    call MPI_ALLREDUCE(dep,dep1,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
-    if (nrank == 0) write(*,*)'## SUB intt VAR dvar1(2) (start) MAX ', dep1
+    call MPI_ALLREDUCE(MPI_IN_PLACE,dep,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
+    if (nrank == 0) write(*,*)'## SUB intt VAR dvar1(2) (start) MAX ', dep
 #endif
 
     if (iimplicit.ge.1) then
@@ -174,11 +174,11 @@ contains
 
 #ifdef DEBG
     dep=maxval(abs(var1))
-    call MPI_ALLREDUCE(dep,dep1,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
-    if (nrank == 0) write(*,*)'## SUB intt VAR var1 MAX ', dep1
+    call MPI_ALLREDUCE(MPI_IN_PLACE,dep,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
+    if (nrank == 0) write(*,*)'## SUB intt VAR var1 MAX ', dep
     dep=maxval(abs(dvar1(:,:,:,1)))
-    call MPI_ALLREDUCE(dep,dep1,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
-    if (nrank == 0) write(*,*)'## SUB intt VAR dvar1 MAX ', dep1
+    call MPI_ALLREDUCE(MPI_IN_PLACE,dep,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
+    if (nrank == 0) write(*,*)'## SUB intt VAR dvar1 MAX ', dep
     if (nrank   ==  0) write(*,*)'# intt done'
 #endif
 
@@ -203,9 +203,10 @@ contains
     use param, only : iimplicit, sc_even
     use param, only : primary_species, massfrac
     use param, only : scalar_lbound, scalar_ubound
+    use param, only : mhd_active
     use variables, only : numscalar,nu0nu
     use var, only : ta1, tb1
-    use mhd,     only : mhd_active,mhd_equation,int_time_magnet
+    use mhd,     only : mhd_equation,int_time_magnet
     use MPI
 
 
@@ -224,7 +225,7 @@ contains
     integer :: is, i, j, k
     
 #ifdef DEBG
-    real(mytype) :: dep, dep1
+    real(mytype) :: dep
     integer :: code
     if (nrank .eq. 0) write(*,*)'## Init int_time'
 #endif
@@ -232,14 +233,14 @@ contains
     call int_time_momentum(ux1, uy1, uz1, dux1, duy1, duz1)
 #ifdef DEBG
     dep=maxval(abs(dux1))
-    call MPI_ALLREDUCE(dep,dep1,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
-    if (nrank == 0) write(*,*)'## int_time dux1 ', dep1
+    call MPI_ALLREDUCE(MPI_IN_PLACE,dep,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
+    if (nrank == 0) write(*,*)'## int_time dux1 ', dep
     dep=maxval(abs(duy1))
-    call MPI_ALLREDUCE(dep,dep1,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
-    if (nrank == 0) write(*,*)'## int_time duy1 ', dep1
+    call MPI_ALLREDUCE(MPI_IN_PLACE,dep,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
+    if (nrank == 0) write(*,*)'## int_time duy1 ', dep
     dep=maxval(abs(duz1))
-    call MPI_ALLREDUCE(dep,dep1,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
-    if (nrank == 0) write(*,*)'## int_time duz1 ', dep1
+    call MPI_ALLREDUCE(MPI_IN_PLACE,dep,1,real_type,MPI_MAX,MPI_COMM_WORLD,code)
+    if (nrank == 0) write(*,*)'## int_time duz1 ', dep
 #endif
 
     IF (ilmn) THEN
@@ -304,7 +305,7 @@ contains
        ENDIF
     ENDIF
 
-    if(mhd_active .and. mhd_equation) then
+    if(mhd_active .and. mhd_equation == 'induction') then
       call int_time_magnet
     endif
 
@@ -340,9 +341,10 @@ contains
     real(mytype),dimension(xsize(1),xsize(2),xsize(3),ntime) :: dux1, duy1, duz1
 
     if (iimplicit.ge.1) then
-       call intt(ux1, dux1, npaire=1, isc=0, forcing1=px1)
-       call intt(uy1, duy1, npaire=0, isc=0, forcing1=py1)
-       call intt(uz1, duz1, npaire=1, isc=0, forcing1=pz1)
+       ! Support for streamwise periodic BCs - Ricardo Frantz
+       call intt(ux1, dux1, npaire=1, isc=-1, forcing1=px1)
+       call intt(uy1, duy1, npaire=0, isc=-2, forcing1=py1)
+       call intt(uz1, duz1, npaire=1, isc=-3, forcing1=pz1)
     else
        call intt(ux1, dux1)
        call intt(uy1, duy1)

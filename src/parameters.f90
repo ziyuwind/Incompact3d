@@ -27,17 +27,19 @@ subroutine parameter(input_i3d)
 
   use gravitycur, only : pfront
 
+  use mod_stret, only : beta
   use probes, only : nprobes, setup_probes, flag_all_digits, flag_extra_probes, xyzprobes
   use visu, only : output2D
-  use forces, only : iforces, nvol, xld, xrd, yld, yud!, zld, zrd
+  use forces, only : iforces, nvol, setup_forces
 
-  use mhd, only: mhd_active,mhd_equation,hartmann,stuart,rem
+  use mhd, only : mhd_equation,hartmann,stuart,rem
+  use particle, only : initype_particle,n_particles,bc_particle,particle_inject_period
 
   implicit none
 
   character(len=80), intent(in) :: input_i3d
   real(mytype) :: theta, cfl,cf2
-  integer :: longueur ,impi,j, is, total
+  integer :: longueur ,impi,j, is, total, ierr
 
   NAMELIST /BasicParam/ p_row, p_col, nx, ny, nz, istret, beta, xlx, yly, zlz, &
        itype, iin, re, u1, u2, init_noise, inflow_noise, &
@@ -48,7 +50,8 @@ subroutine parameter(input_i3d)
        ivisu, ipost, &
        gravx, gravy, gravz, &
        cpg, idir_stream, &
-       ifilter, C_filter, iturbine, mhd_active
+       ifilter, C_filter, iturbine, mhd_active, particle_active, FreeStream
+
   NAMELIST /NumOptions/ ifirstder, isecondder, itimescheme, iimplicit, &
        nu0nu, cnu, ipinter
   NAMELIST /InOutParam/ irestart, icheckpoint, ioutput, nvisu, ilist, iprocessing, &
@@ -61,9 +64,12 @@ subroutine parameter(input_i3d)
        scalar_lbound, scalar_ubound, sc_even, sc_skew, &
        alpha_sc, beta_sc, g_sc, Tref
   NAMELIST /LESModel/ jles, smagcst, smagwalldamp, nSmag, walecst, maxdsmagcst, iconserv
+  NAMELIST /ThetaDotModel/ jtheta_dot,jthickness,Method_FT,K_theta,H_12
+  NAMELIST /BlowingModel/ Blowing,A_Blowing,Xst_Blowing,Xen_Blowing,Range_Smooth  
+  NAMELIST /AdversePresGrad/ APG,APG_DpDX,APG_Beta
+  NAMELIST /ProbeSpectra/ Pro_Spectra,X_Pro_Spectra,Z_Pro_Spectra
   NAMELIST /Tripping/ itrip,A_tr,xs_tr_tbl,ys_tr_tbl,ts_tr_tbl,x0_tr_tbl
   NAMELIST /ibmstuff/ cex,cey,cez,ra,rai,rao,nobjmax,nraf,nvol,iforces, npif, izap, ianal, imove, thickness, chord, omega ,ubcx,ubcy,ubcz,rads, c_air
-  NAMELIST /ForceCVs/ xld, xrd, yld, yud!, zld, zrd
   NAMELIST /LMN/ dens1, dens2, prandtl, ilmn_bound, ivarcoeff, ilmn_solve_temp, &
        massfrac, mol_weight, imultispecies, primary_species, &
        Fr, ibirman_eos
@@ -77,6 +83,7 @@ subroutine parameter(input_i3d)
      nclxBx1, nclxBxn, nclyBx1, nclyBxn, nclzBx1, nclzBxn, &
      nclxBy1, nclxByn, nclyBy1, nclyByn, nclzBy1, nclzByn, &
      nclxBz1, nclxBzn, nclyBz1, nclyBzn, nclzBz1, nclzBzn
+  NAMELIST/ParTrack/initype_particle,n_particles,bc_particle,particle_inject_period
 
 
 #ifdef DEBG
@@ -123,8 +130,7 @@ subroutine parameter(input_i3d)
      read(10, nml=ProbesParam); rewind(10)
   endif
   if (iforces.eq.1) then
-     allocate(xld(nvol), xrd(nvol), yld(nvol), yud(nvol))!, zld(nvol), zrd(nvol))
-     read(10, nml=ForceCVs); rewind(10)
+     call setup_forces(10)
   endif
   
   !! Set Scalar BCs same as fluid (may be overridden) [DEFAULT]
@@ -227,15 +233,23 @@ subroutine parameter(input_i3d)
     nclzBn(3) = nclzBzn
    endif
 
+   if(particle_active) then
+    read(10, nml=ParTrack); rewind(10) 
+   endif
+
   ! !! These are the 'optional'/model parameters
-  ! read(10, nml=ScalarParam)
-  if(ilesmod==0) then
-     nu0nu=four
-     cnu=0.44_mytype
-  endif
   if(ilesmod.ne.0) then
      read(10, nml=LESModel); rewind(10)
   endif
+  
+  !!==> Pasha
+  if(itype .eq. 15) then
+     read(10, nml=ThetaDotModel); rewind(10)
+     read(10, nml=BlowingModel); rewind(10)
+     read(10, nml=AdversePresGrad); rewind(10)
+     read(10, nml=ProbeSpectra); rewind(10)
+  end if
+
   if (itype.eq.itype_tbl) then
      read(10, nml=Tripping); rewind(10)
   endif
@@ -378,6 +392,8 @@ subroutine parameter(input_i3d)
         print *,'Sandbox'
      elseif (itype.eq.itype_cavity) then
         print *,'Cavity'  
+     elseif (itype.eq.itype_ptbl) then
+        print *,'Temporal turbulent boundary layer' 
      else
         print *,'Unknown itype: ', itype
         stop
@@ -451,6 +467,63 @@ subroutine parameter(input_i3d)
        else
        endif
      endif
+     write(*,*) '==========================================================='
+     if (FreeStream==0) then 
+         write(*,"(' FreeStream (BC)           : ',A10)") "Off"
+     else if (FreeStream==1) then
+         write(*,"(' FreeStream (BC)           : ',A10)") "On"
+     end if         
+     write(*,*) '==========================================================='
+      if (jtheta_dot==0) then 
+         write(*,"(' Theta dot Model           : ',A10)") "Biau"
+      else if (jtheta_dot==1) then
+         write(*,"(' Theta dot Model           : ',A10)") "Andy"
+         if (jthickness ==0) then 
+            write(*,"(' Model works based on      : ',A25)") "Momentum Thickness"
+         else
+            write(*,"(' Model works based on      : ',A25)") "Displacement Thickness"
+            write(*,"(' H_12 for scaling          : ',F12.6)") H_12 
+         end if
+         if (Method_FT ==0) then 
+            write(*,"(' Theta Model version       : ',A25)") " v1.0 "
+         elseif (Method_FT ==1) then 
+            write(*,"(' Theta Model version       : ',A25)") " v2.0 "
+         end if
+         write(*,"(' K coefficient => e(Th)    : ',F12.6)") K_theta 
+      endif
+
+      write(*,*) '==========================================================='
+      if (Blowing==0) then 
+         write(*,"(' Blowing                   : ',A10)") "Off"
+      elseif (Blowing==1) then
+         write(*,"(' Blowing                   : ',A10)") "On"
+         write(*,"(' Blowing Amplitude         : ',F12.6)") A_Blowing
+         write(*,"(' Blowing Region Start      : ',F12.6)") Xst_Blowing
+         write(*,"(' Blowing Region End        : ',F12.6)") Xen_Blowing
+         write(*,"(' Control Region Thickness  : ',F12.6)") Xen_Blowing-Xst_Blowing
+         write(*,"(' Smoothening Range         : ',F12.6)") Range_Smooth
+      endif
+
+      write(*,*) '==========================================================='
+      if (APG==0) then 
+         write(*,"(' Adverse Pressure Gradient : ',A10)") "Off"
+      elseif (APG==1) then
+         write(*,"(' Adverse Pressure Gradient : ',A10)") "On"
+         write(*,"(' Pressure Gradient         : ',F12.6)") APG_DpDX
+      elseif (APG==2) then
+         write(*,"(' Adverse Pressure Gradient : ',A10)") "On"
+         write(*,"(' Beta of Pressure Gradient : ',F12.6)") APG_Beta         
+      endif
+
+      write(*,*) '==========================================================='
+      if (Pro_Spectra==0) then 
+         write(*,"(' Probe for Spectra         : ',A10)") "Off"
+      elseif (Pro_Spectra==1) then
+         write(*,"(' Probe for Spectra         : ',A10)") "On"
+         write(*,"(' Probe Location (X)        : ',F12.6)") X_Pro_Spectra
+         write(*,"(' Probe Location (Z)        : ',F12.6)") Z_Pro_Spectra
+      endif
+
      write(*,*) '==========================================================='
      write(*,"(' ifirst                 : ',I17)") ifirst
      write(*,"(' ilast                  : ',I17)") ilast
@@ -526,6 +599,7 @@ subroutine parameter(input_i3d)
      write(*,"(' nclx1, nclxn           : ',I15,',',I1 )") nclx1,nclxn
      write(*,"(' ncly1, nclyn           : ',I15,',',I1 )") ncly1,nclyn
      write(*,"(' nclz1, nclzn           : ',I15,',',I1 )") nclz1,nclzn
+     write(*,"(' FreeStream             : ',I15 )") FreeStream
      write(*,*) '==========================================================='
      if ((iscalar==1).or.(ilmn)) then
        write(*,"(' Boundary condition scalar field: ')")
@@ -568,6 +642,15 @@ subroutine parameter(input_i3d)
      if (itype==itype_gravitycur) then
         write(*,*)  "Initial front location: ", pfront
      endif
+     ! Check output parameters are valid for PTBL
+     if (itype.eq.itype_ptbl) then
+        if (ioutput < ilist .or. mod(ioutput, ilist) /= 0) then
+           call decomp_2d_abort(__FILE__, __LINE__, ioutput, "ioutput must be exactly divisible by ilist")
+           call MPI_ABORT(MPI_COMM_WORLD, -1, ierr)
+        else
+           if (nrank == 0) write (*, *) 'Output buffer size for TTBL postprocessing = ', ioutput / ilist
+        end if
+     end if
      write(*,*) '==========================================================='
   endif
   
@@ -597,11 +680,13 @@ subroutine parameter_defaults()
   use complex_geometry
   use ibm_param
 
+  use mod_stret, only : beta
   use probes, only : nprobes, flag_all_digits, flag_extra_probes
   use visu, only : output2D
   use forces, only : iforces, nvol
 
-  use mhd, only: mhd_active, mhd_equation, rem, stuart, hartmann 
+  use mhd, only: mhd_equation, rem, stuart, hartmann 
+  use particle, only : initype_particle,n_particles,bc_particle,particle_inject_period
 
   implicit none
 
@@ -628,10 +713,17 @@ subroutine parameter_defaults()
   datapath = './data/'
 
   mhd_active=.false.
-  mhd_equation=.false.
+  mhd_equation='potential'
   rem = zero
   stuart = zero
   hartmann = zero
+
+  ! particle tracking
+  particle_active =.false.
+  initype_particle = 'uniform'
+  n_particles = 0
+  bc_particle = (/"periodic","periodic","periodic","periodic","periodic","periodic"/)
+  particle_inject_period = 0.0
 
   !! LES stuff
   smagwalldamp=1
@@ -640,9 +732,17 @@ subroutine parameter_defaults()
   smagcst=0.15
   maxdsmagcst=0.3
 
+  
+  !! SVV stuff
+  nu0nu=four
+  cnu=0.44_mytype
+  
   !! IBM stuff
   nraf = 0
   nobjmax = 0
+  ubcx = zero
+  ubcy = zero
+  ubcz = zero
 
   nvol = 0
   iforces = 0
